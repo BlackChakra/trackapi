@@ -1,105 +1,87 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { TrackResponse, ApiErrorResponse } from '@/app/types';
+import { validateTrackRequest } from '@/app/lib/validation';
+import { detectCourier, fetchTracking } from '@/app/lib/trackingmore.service';
+import { logger } from '@/app/lib/logger';
 
-const TRACKINGMORE_API_KEY = process.env.TRACKINGMORE_API_KEY || '';
+const CONTEXT = 'api/track';
 
-// Helper: API key authentication
+// ─── Authentication ─────────────────────────────────────────────────
 function authenticate(req: NextRequest): boolean {
-  const apiKey = process.env.API_KEY || '';
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
+    logger.error(CONTEXT, 'API_KEY environment variable is not set');
+    return false;
+  }
   const clientKey = req.headers.get('x-api-key');
   return clientKey === apiKey;
 }
 
-// Helper: Detect courier via TrackingMore
-async function detectCourier(trackingNumber: string): Promise<string | undefined> {
-  if (!TRACKINGMORE_API_KEY) return undefined;
-  const resp = await fetch('https://api.trackingmore.com/v4/couriers/detect', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Tracking-Api-Key': TRACKINGMORE_API_KEY,
-    } as Record<string, string>,
-    body: JSON.stringify({ tracking_number: trackingNumber }),
-  });
-  if (!resp.ok) return undefined;
-  const data = await resp.json();
-  if (
-    data?.data?.couriers &&
-    Array.isArray(data.data.couriers) &&
-    data.data.couriers.length > 0
-  ) {
-    // Use the first detected courier
-    return data.data.couriers[0].code as string;
-  }
-  return undefined;
+// ─── Helpers ────────────────────────────────────────────────────────
+function jsonError(error: string, status: number, details?: unknown): NextResponse<ApiErrorResponse> {
+  return NextResponse.json({ error, ...(details !== undefined ? { details } : {}) }, { status });
 }
 
-// Helper: Fetch tracking info from TrackingMore
-async function fetchTrackingInfo(courier: string, trackingNumber: string) {
-  if (!TRACKINGMORE_API_KEY) return { ok: false, data: { meta: { message: 'TrackingMore API key not set.' } } };
-  const url = `https://api.trackingmore.com/v4/trackings/${courier}/${trackingNumber}`;
-  const resp = await fetch(url, {
-    headers: {
-      'Tracking-Api-Key': TRACKINGMORE_API_KEY,
-    } as Record<string, string>,
-  });
-  const data = await resp.json();
-  return { ok: resp.ok, data };
-}
-
-export async function POST(req: NextRequest) {
+// ─── POST Handler ───────────────────────────────────────────────────
+export async function POST(req: NextRequest): Promise<NextResponse<TrackResponse | ApiErrorResponse>> {
+  // Auth check
   if (!authenticate(req)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return jsonError('Unauthorized', 401);
   }
 
-  let tracking_number: string | undefined;
-  let courier: string | undefined;
+  // Parse body
+  let body: unknown;
   try {
-    const body = await req.json();
-    tracking_number = body.tracking_number;
-    courier = body.courier;
-  } catch (e) {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    body = await req.json();
+  } catch (error) {
+    logger.warn(CONTEXT, 'Failed to parse request body', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return jsonError('Invalid JSON body', 400);
   }
 
-  if (!tracking_number) {
-    return NextResponse.json({ error: 'Missing tracking_number' }, { status: 400 });
+  // Validate input
+  const validation = validateTrackRequest(body);
+  if (!validation.success) {
+    return jsonError(validation.error, 400);
   }
+
+  const { tracking_number, courier } = validation.data;
 
   // Auto-detect courier if not provided
-  let courierCode: string | undefined = courier;
+  let courierCode = courier;
   if (!courierCode) {
-    courierCode = await detectCourier(tracking_number);
+    courierCode = (await detectCourier(tracking_number)) ?? undefined;
     if (!courierCode) {
-      return NextResponse.json({
-        error: 'Unable to auto-detect courier. Please specify the courier manually.',
-      }, { status: 400 });
+      return jsonError(
+        'Unable to auto-detect courier. Please specify the courier manually.',
+        400
+      );
     }
   }
 
-  // Fetch tracking info
-  const { ok, data } = await fetchTrackingInfo(courierCode, tracking_number);
-  if (!ok) {
-    return NextResponse.json({
-      error: data?.meta?.message || 'Failed to fetch tracking info',
-      details: data,
-    }, { status: 400 });
-  }
-
-  // Standardize response
-  const tracking = data.data?.items?.[0];
+  // Fetch tracking
+  const tracking = await fetchTracking(courierCode, tracking_number);
   if (!tracking) {
-    return NextResponse.json({
-      error: 'No tracking data found',
-      details: data,
-    }, { status: 404 });
+    return jsonError('No tracking data found', 404);
   }
 
-  return NextResponse.json({
+  // Build typed response
+  const response: TrackResponse = {
     tracking_number: tracking.tracking_number,
     courier: tracking.courier_code,
     status: tracking.status,
-    last_checkpoint: tracking.lastEvent || null,
-    checkpoints: tracking.origin_info?.trackinfo || [],
-    raw: tracking,
+    last_checkpoint: tracking.lastEvent
+      ? (tracking.origin_info?.trackinfo?.[0] ?? null)
+      : null,
+    checkpoints: tracking.origin_info?.trackinfo ?? [],
+  };
+
+  logger.info(CONTEXT, `Tracking fetched successfully`, {
+    tracking_number: response.tracking_number,
+    courier: response.courier,
+    status: response.status,
   });
+
+  return NextResponse.json(response);
 }

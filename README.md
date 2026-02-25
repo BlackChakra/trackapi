@@ -1,75 +1,59 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TrackAPI — Shipment Tracking Service
 
-## Getting Started
-
-First, run the development server:
-
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-
----
-
-# Shipment Tracking API
-
-This project includes an API-first web service for tracking global shipments using tracking numbers, powered by TrackingMore.
+An API-first web service for tracking global shipments using tracking numbers, powered by [TrackingMore](https://www.trackingmore.com/).
 
 ## Features
-- API key authentication
-- Courier auto-detection (or manual selection)
-- Real-time tracking via TrackingMore
-- Standardized JSON responses
-- Ready for integration with other apps/services
+
+- **API key authentication** — secured with `x-api-key` header
+- **Courier auto-detection** — or manual selection via courier code
+- **Real-time tracking** — status, checkpoints, and last event data
+- **Standardized JSON** — consistent response format across all carriers
+- **Rate limiting** — 30 requests/minute per IP (configurable)
+- **CORS support** — configurable allowed origins
+- **Input validation** — tracking number and courier code sanitization
+- **Web UI** — built-in tracking form at `/track`
 
 ## Setup
+
 1. **Install dependencies:**
    ```bash
    npm install
    ```
+
 2. **Environment variables:**
-   Create a `.env.local` file in the project root with:
+   Create a `.env.local` file in the project root:
    ```env
    TRACKINGMORE_API_KEY=your_trackingmore_api_key
    API_KEY=your_custom_api_key
+   ALLOWED_ORIGINS=*
    ```
-   - `TRACKINGMORE_API_KEY`: Your TrackingMore API key
-   - `API_KEY`: Your own API key for authenticating users of this API
+   | Variable | Description |
+   |----------|-------------|
+   | `TRACKINGMORE_API_KEY` | Your TrackingMore API key |
+   | `API_KEY` | API key for authenticating clients |
+   | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins (default: `*`) |
 
 3. **Run the development server:**
    ```bash
    npm run dev
    ```
 
+4. **Run tests:**
+   ```bash
+   npx vitest run
+   ```
+
 ## API Usage
 
 ### Endpoint
+
 `POST /api/track`
 
 #### Headers
-- `x-api-key: <your_custom_api_key>`
-- `Content-Type: application/json`
+| Header | Value |
+|--------|-------|
+| `x-api-key` | Your API key |
+| `Content-Type` | `application/json` |
 
 #### Request Body
 ```json
@@ -78,49 +62,66 @@ This project includes an API-first web service for tracking global shipments usi
   "courier": "<optional courier code>"
 }
 ```
-- `tracking_number` (required): The shipment tracking number
-- `courier` (optional): Courier code (if omitted, auto-detection is used)
+- `tracking_number` (required) — 3-60 alphanumeric characters
+- `courier` (optional) — courier code (auto-detected if omitted)
 
 #### Example Request
-```http
-POST /api/track
-x-api-key: mysecretkey
-Content-Type: application/json
-
-{
-  "tracking_number": "1234567890"
-}
+```bash
+curl -X POST http://localhost:3000/api/track \
+  -H "x-api-key: your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"tracking_number": "1Z999AA10123456784"}'
 ```
 
-#### Example Success Response
+#### Success Response (200)
 ```json
 {
-  "tracking_number": "1234567890",
-  "courier": "fedex",
+  "tracking_number": "1Z999AA10123456784",
+  "courier": "ups",
   "status": "delivered",
-  "last_checkpoint": { /* ... */ },
-  "checkpoints": [ /* ... */ ],
-  "raw": { /* full TrackingMore response */ }
+  "last_checkpoint": { ... },
+  "checkpoints": [ ... ]
 }
 ```
 
-#### Example Error Response
-```json
-{
-  "error": "Unable to auto-detect courier. Please specify the courier manually."
-}
+#### Error Responses
+| Status | Condition |
+|--------|-----------|
+| `400` | Invalid input, missing tracking number, or courier auto-detect failure |
+| `401` | Missing or invalid API key |
+| `404` | No tracking data found |
+| `429` | Rate limit exceeded |
+
+## Project Structure
+
+```
+src/
+├── middleware.ts              # Rate limiting + CORS
+├── app/
+│   ├── types.ts               # TypeScript interfaces
+│   ├── lib/
+│   │   ├── logger.ts          # Structured logging
+│   │   ├── validation.ts      # Input validation
+│   │   └── trackingmore.service.ts  # TrackingMore API service
+│   ├── api/track/route.ts     # API endpoint
+│   ├── track/
+│   │   ├── actions.ts         # Server Action (secure)
+│   │   └── page.tsx           # Tracking UI
+│   ├── page.tsx               # Landing page
+│   ├── layout.tsx             # Root layout
+│   └── globals.css            # Global styles
 ```
 
-## Integration
-- This API is designed for easy integration into other apps and services.
-- Returns clear, standardized JSON for all responses.
+## Tech Stack
 
-## Security
-- Your TrackingMore API key and your own API key are kept in `.env.local` (never commit this file).
-- All requests require the correct `x-api-key` header.
+| Layer | Technology |
+|-------|-----------|
+| Framework | Next.js 15 (App Router) |
+| Language | TypeScript 5 |
+| Styling | Tailwind CSS 4 |
+| External API | TrackingMore v4 |
+| Deployment | Vercel-ready |
 
-## Deploy on Vercel
+## Deploy
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Deploy to [Vercel](https://vercel.com) with one click. Set your environment variables in the Vercel dashboard.
