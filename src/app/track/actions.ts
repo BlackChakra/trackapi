@@ -1,6 +1,6 @@
 'use server';
 
-import type { TrackResponse, ApiErrorResponse } from '@/app/types';
+import type { TrackResponse } from '@/app/types';
 import { validateTrackingNumber, validateCourierCode } from '@/app/lib/validation';
 import { detectCourier, fetchTracking } from '@/app/lib/trackingmore.service';
 import { logger } from '@/app/lib/logger';
